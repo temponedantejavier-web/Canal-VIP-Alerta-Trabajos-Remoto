@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import sys
 from datetime import datetime, timedelta
 import requests
 import feedparser
@@ -9,14 +10,15 @@ from bs4 import BeautifulSoup
 from openai import OpenAI
 from flask import Flask, request, jsonify
 
+# Desactivar buffering de logs para ver impresiones en tiempo real en Render
+sys.stdout.reconfigure(line_buffering=True)
+
 app = Flask(__name__)
 
 # ------------------------------------------------------------------------------
-# CONFIGURACIÓN Y LECTURA FLEXIBLE DE VARIABLES (TOLERANTE A MAYÚSCULAS/ERRATAS)
+# CONFIGURACIÓN Y LECTURA FLEXIBLE DE VARIABLES
 # ------------------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = (
-    os.getenv("TELEGRAM_BOT_TOKEN") or ""
-).strip()
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
 
 TELEGRAM_VIP_CHANNEL_ID = (
     os.getenv("TELEGRAM_VIP_CHANNEL_ID") or 
@@ -37,6 +39,13 @@ MP_ACCESS_TOKEN = (
     os.getenv("MP_ACCESS_TOKEN") or 
     os.getenv("Mp_acces_token") or 
     os.getenv("Mp_access_token") or ""
+).strip()
+
+# LINK DIRECTO DE MERCADO PAGO (OPCIÓN INFALIBLE)
+MP_FIXED_LINK = (
+    os.getenv("MP_FIXED_LINK") or 
+    os.getenv("Mp_fixed_link") or 
+    os.getenv("MP_LINK") or ""
 ).strip()
 
 WEBHOOK_URL = (
@@ -74,18 +83,18 @@ def save_json_file(filename, data):
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        print(f"❌ Error al guardar {filename}: {e}")
+        print(f"❌ Error al guardar {filename}: {e}", flush=True)
 
 # ------------------------------------------------------------------------------
 # TELEGRAM HELPERS
 # ------------------------------------------------------------------------------
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ Error Telegram: TELEGRAM_BOT_TOKEN no esta configurado.")
+        print("❌ Error Telegram: TELEGRAM_BOT_TOKEN no esta configurado.", flush=True)
         return None
 
     if not chat_id:
-        print("❌ Error Telegram: chat_id esta vacio.")
+        print("❌ Error Telegram: chat_id esta vacio.", flush=True)
         return None
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -101,10 +110,10 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         res = requests.post(url, json=payload, timeout=10)
         res_json = res.json()
         if not res_json.get("ok"):
-            print(f"❌ Error enviando mensaje a Telegram: {res_json}")
+            print(f"❌ Error enviando mensaje a Telegram: {res_json}", flush=True)
         return res_json
     except Exception as e:
-        print(f"❌ Excepcion enviando mensaje Telegram: {e}")
+        print(f"❌ Excepcion enviando mensaje Telegram: {e}", flush=True)
         return None
 
 def create_one_time_invite_link(channel_id):
@@ -119,9 +128,9 @@ def create_one_time_invite_link(channel_id):
         if res.get("ok"):
             return res["result"]["invite_link"]
         else:
-            print(f"❌ Error creando link de invitacion en Telegram: {res}")
+            print(f"❌ Error creando link de invitacion en Telegram: {res}", flush=True)
     except Exception as e:
-        print(f"❌ Excepcion creando link de invitacion: {e}")
+        print(f"❌ Excepcion creando link de invitacion: {e}", flush=True)
     return None
 
 def kick_user_from_channel(channel_id, user_id):
@@ -130,16 +139,21 @@ def kick_user_from_channel(channel_id, user_id):
     try:
         requests.post(ban_url, json={"chat_id": channel_id, "user_id": user_id}, timeout=10)
         requests.post(unban_url, json={"chat_id": channel_id, "user_id": user_id, "only_if_banned": True}, timeout=10)
-        print(f"🚫 Usuario {user_id} removido del canal VIP.")
+        print(f"🚫 Usuario {user_id} removido del canal VIP.", flush=True)
     except Exception as e:
-        print(f"❌ Error al remover usuario {user_id}: {e}")
+        print(f"❌ Error al remover usuario {user_id}: {e}", flush=True)
 
 # ------------------------------------------------------------------------------
 # MERCADO PAGO Y WEBHOOKS
 # ------------------------------------------------------------------------------
 def create_mp_preference(user_id):
+    # Si configuraste un link directo de Mercado Pago (ej. https://mpago.la/...), usalo prioritariamente
+    if MP_FIXED_LINK:
+        print(f"🔗 Usando MP_FIXED_LINK directo: {MP_FIXED_LINK}", flush=True)
+        return MP_FIXED_LINK
+
     if not MP_ACCESS_TOKEN:
-        print("❌ ERROR MERCADO PAGO: La variable MP_ACCESS_TOKEN esta vacia.")
+        print("❌ ERROR MERCADO PAGO: MP_ACCESS_TOKEN y MP_FIXED_LINK estan vacios.", flush=True)
         return None
 
     url = "https://api.mercadopago.com/checkout/preferences"
@@ -175,13 +189,15 @@ def create_mp_preference(user_id):
         res = requests.post(url, json=payload, headers=headers, timeout=15)
         res_data = res.json()
         
-        if res.status_code in [200, 201] and "init_point" in res_data:
-            return res_data["init_point"]
-        else:
-            print(f"❌ ERROR MERCADO PAGO [HTTP {res.status_code}]: {res_data}")
-            return None
+        if res.status_code in [200, 201]:
+            init_point = res_data.get("init_point") or res_data.get("sandbox_init_point")
+            if init_point:
+                return init_point
+        
+        print(f"❌ ERROR MERCADO PAGO API [HTTP {res.status_code}]: {res_data}", flush=True)
+        return None
     except Exception as e:
-        print(f"❌ Excepcion conectando a MercadoPago: {e}")
+        print(f"❌ Excepcion conectando a MercadoPago: {e}", flush=True)
         return None
 
 @app.route("/webhook/mercadopago", methods=["POST"])
@@ -224,9 +240,9 @@ def mercadopago_webhook():
                     msg = "🎉 *¡Pago confirmado!* Contacta al soporte para recibir tu enlace."
 
                 send_telegram_message(user_id, msg)
-                print(f"✅ Suscripcion activada exitosamente para usuario {user_id}")
+                print(f"✅ Suscripcion activada exitosamente para usuario {user_id}", flush=True)
     except Exception as e:
-        print(f"❌ Error procesando Webhook MP: {e}")
+        print(f"❌ Error procesando Webhook MP: {e}", flush=True)
 
     return jsonify({"status": "ok"}), 200
 
@@ -268,11 +284,11 @@ def generate_job_post_ai(title, description, raw_link):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"⚠️ Error OpenAI: {e}")
+        print(f"⚠️ Error OpenAI: {e}", flush=True)
         return f"💼 *{title}*\n\n🔗 [Postularse aqui]({raw_link})"
 
 def run_job_scraper():
-    print("🚀 Hilo iniciado: Escaner de Empleos")
+    print("🚀 Hilo iniciado: Escaner de Empleos", flush=True)
     while True:
         posted_jobs = set(load_json_file(POSTED_JOBS_FILE, []))
         new_jobs = []
@@ -285,7 +301,7 @@ def run_job_scraper():
                     desc = BeautifulSoup(entry.summary, "html.parser").get_text() if hasattr(entry, 'summary') else ""
                     new_jobs.append((job_id, entry.title, desc, entry.link))
         except Exception as e:
-            print(f"❌ Error Scraper WWR: {e}")
+            print(f"❌ Error Scraper WWR: {e}", flush=True)
 
         published_count = 0
         for job_id, title, description, link in new_jobs:
@@ -305,7 +321,7 @@ def run_job_scraper():
 # LISTENER Y CONTROL DE VENCIMIENTOS
 # ------------------------------------------------------------------------------
 def run_telegram_listener():
-    print("🎧 Hilo iniciado: Bot Listener de Telegram")
+    print("🎧 Hilo iniciado: Bot Listener de Telegram", flush=True)
     
     try:
         requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
@@ -353,7 +369,7 @@ def run_telegram_listener():
                                 f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
                                 f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
                                 f"⚠️ *Atencion:* Ocurrio un inconveniente al generar la pasarela de pago. "
-                                f"Revisa los logs en Render para verificar credenciales."
+                                f"Revisa los logs en Render."
                             )
                             send_telegram_message(chat_id, msg)
 
@@ -365,11 +381,11 @@ def run_telegram_listener():
                         else:
                             send_telegram_message(chat_id, "❌ No tienes una suscripcion activa. Usa /suscribirse para ingresar.")
         except Exception as e:
-            print(f"❌ Error en Listener Telegram: {e}")
+            print(f"❌ Error en Listener Telegram: {e}", flush=True)
             time.sleep(5)
 
 def run_expiration_checker():
-    print("🕒 Hilo iniciado: Verificador de Vencimientos")
+    print("🕒 Hilo iniciado: Verificador de Vencimientos", flush=True)
     while True:
         subscribers = load_json_file(SUBSCRIBERS_FILE, {})
         now = datetime.now()
