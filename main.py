@@ -63,6 +63,9 @@ SCAN_INTERVAL_SECONDS = 1800
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
+# BASE URL DE TELEGRAM SIN SINTAXIS AMBIGUA
+TG_BASE_URL = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN
+
 # ------------------------------------------------------------------------------
 # MANEJO DE ARCHIVOS JSON
 # ------------------------------------------------------------------------------
@@ -87,11 +90,11 @@ def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return None
 
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = TG_BASE_URL + "/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML",  # Usamos HTML para evitar errores de Markdown y código plano
+        "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
     if reply_markup:
@@ -104,7 +107,7 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         return None
 
 def create_one_time_invite_link(channel_id):
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/createChatInviteLink"
+    url = TG_BASE_URL + "/createChatInviteLink"
     payload = {
         "chat_id": channel_id,
         "member_limit": 1,
@@ -119,8 +122,8 @@ def create_one_time_invite_link(channel_id):
     return None
 
 def kick_user_from_channel(channel_id, user_id):
-    ban_url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/banChatMember"
-    unban_url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/unbanChatMember"
+    ban_url = TG_BASE_URL + "/banChatMember"
+    unban_url = TG_BASE_URL + "/unbanChatMember"
     try:
         requests.post(ban_url, json={"chat_id": channel_id, "user_id": user_id}, timeout=10)
         requests.post(unban_url, json={"chat_id": channel_id, "user_id": user_id, "only_if_banned": True}, timeout=10)
@@ -178,7 +181,7 @@ def generate_job_post_ai(title, description, raw_link):
 
     REGLAS OBLIGATORIAS DE FORMATO:
     1. Usa ÚNICAMENTE etiquetas HTML válidas para Telegram (<b>, <i>, <a href="...">).
-    2. NUNCA envíes bloques de código (está estrictamente prohibido usar ``` o ```html o ```markdown).
+    2. NUNCA envíes bloques de código (está estrictamente prohibido usar ```).
     3. Todo el resumen debe estar redactado en ESPAÑOL fluido y profesional.
     4. Incluye un enlace HTML directo y clickeable a la oferta.
 
@@ -197,7 +200,6 @@ def generate_job_post_ai(title, description, raw_link):
         )
         content = response.choices[0].message.content.strip()
         
-        # Sanitizar para remover cualquier bloque de código sobrante si la IA lo incluyó
         if content.startswith("```"):
             lines = content.splitlines()
             if lines[0].startswith("```"):
@@ -218,7 +220,7 @@ def run_job_scraper():
         new_jobs = []
 
         try:
-            feed = feedparser.parse("[https://weworkremotely.com/remote-jobs.rss](https://weworkremotely.com/remote-jobs.rss)")
+            feed = feedparser.parse("https://weworkremotely.com/remote-jobs.rss")
             for entry in feed.entries[:10]:
                 job_id = entry.id if 'id' in entry else entry.link
                 if job_id not in posted_jobs:
@@ -248,14 +250,14 @@ def run_telegram_listener():
     print("🎧 Hilo iniciado: Bot Listener de Telegram", flush=True)
     
     try:
-        requests.get(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
+        requests.get(TG_BASE_URL + "/deleteWebhook", timeout=5)
     except Exception:
         pass
 
     offset = None
     while True:
         try:
-            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/getUpdates"
+            url = TG_BASE_URL + "/getUpdates"
             params = {"timeout": 20, "offset": offset}
             response = requests.get(url, params=params, timeout=25).json()
 
