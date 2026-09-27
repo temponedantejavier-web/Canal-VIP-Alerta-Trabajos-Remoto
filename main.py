@@ -12,15 +12,19 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # ------------------------------------------------------------------------------
-# CONFIGURACIÓN Y VARIABLES DE ENTORNO
+# CONFIGURACIÓN Y SANITIZACIÓN DE VARIABLES DE ENTORNO
 # ------------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_VIP_CHANNEL_ID = os.getenv("TELEGRAM_VIP_CHANNEL_ID", "").strip()
-BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip()
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "").strip()
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
-SUBSCRIPTION_PRICE = float(os.getenv("SUBSCRIPTION_PRICE", "5000.0"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+
+try:
+    SUBSCRIPTION_PRICE = float(os.getenv("SUBSCRIPTION_PRICE", "5000").replace(",", "").strip())
+except Exception:
+    SUBSCRIPTION_PRICE = 5000.0
 
 POSTED_JOBS_FILE = "posted_jobs.json"
 SUBSCRIBERS_FILE = "subscribers.json"
@@ -49,6 +53,10 @@ def save_json_file(filename, data):
 # TELEGRAM HELPERS
 # ------------------------------------------------------------------------------
 def send_telegram_message(chat_id, text, reply_markup=None):
+    if not TELEGRAM_BOT_TOKEN:
+        print("❌ Error Telegram: TELEGRAM_BOT_TOKEN no esta configurado.")
+        return None
+
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -60,9 +68,12 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         payload["reply_markup"] = reply_markup
     try:
         res = requests.post(url, json=payload, timeout=10)
-        return res.json()
+        res_json = res.json()
+        if not res_json.get("ok"):
+            print(f"❌ Error enviando mensaje a Telegram: {res_json}")
+        return res_json
     except Exception as e:
-        print(f"❌ Error al enviar mensaje por Telegram: {e}")
+        print(f"❌ Excepcion enviando mensaje Telegram: {e}")
         return None
 
 def create_one_time_invite_link(channel_id):
@@ -76,8 +87,10 @@ def create_one_time_invite_link(channel_id):
         res = requests.post(url, json=payload, timeout=10).json()
         if res.get("ok"):
             return res["result"]["invite_link"]
+        else:
+            print(f"❌ Error creando link de invitacion en Telegram: {res}")
     except Exception as e:
-        print(f"❌ Error al crear link de invitacion: {e}")
+        print(f"❌ Excepcion creando link de invitacion: {e}")
     return None
 
 def kick_user_from_channel(channel_id, user_id):
@@ -94,11 +107,18 @@ def kick_user_from_channel(channel_id, user_id):
 # MERCADO PAGO Y WEBHOOKS
 # ------------------------------------------------------------------------------
 def create_mp_preference(user_id):
+    if not MP_ACCESS_TOKEN:
+        print("❌ ERROR MERCADO PAGO: La variable MP_ACCESS_TOKEN esta vacia en Render.")
+        return None
+
     url = "https://api.mercadopago.com/checkout/preferences"
     headers = {
         "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
+    
+    back_url = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "https://mercadopago.com"
+    
     payload = {
         "items": [
             {
@@ -108,22 +128,29 @@ def create_mp_preference(user_id):
                 "currency_id": "ARS"
             }
         ],
-        "back_urls": {"success": f"https://t.me/{BOT_USERNAME}"},
+        "back_urls": {
+            "success": back_url,
+            "pending": back_url,
+            "failure": back_url
+        },
         "auto_return": "approved",
-        "notification_url": f"{WEBHOOK_URL}/webhook/mercadopago",
         "external_reference": str(user_id)
     }
+
+    if WEBHOOK_URL and WEBHOOK_URL.startswith("http"):
+        payload["notification_url"] = f"{WEBHOOK_URL}/webhook/mercadopago"
+
     try:
         res = requests.post(url, json=payload, headers=headers, timeout=15)
         res_data = res.json()
         
-        if "init_point" in res_data:
+        if res.status_code in [200, 201] and "init_point" in res_data:
             return res_data["init_point"]
         else:
-            print(f"❌ Respuesta rechazada por MercadoPago: {res_data}")
+            print(f"❌ ERROR MERCADO PAGO [HTTP {res.status_code}]: {res_data}")
             return None
     except Exception as e:
-        print(f"❌ Error de conexion con MercadoPago: {e}")
+        print(f"❌ Excepcion conectando a MercadoPago: {e}")
         return None
 
 @app.route("/webhook/mercadopago", methods=["POST"])
@@ -166,7 +193,7 @@ def mercadopago_webhook():
                     msg = "🎉 *¡Pago confirmado!* Contacta al soporte para recibir tu enlace."
 
                 send_telegram_message(user_id, msg)
-                print(f"✅ Suscripcion activada exitosamente para usuario {user_id}")
+                print(f"✅ Suscripcion activada exitosamente para el usuario {user_id}")
     except Exception as e:
         print(f"❌ Error procesando Webhook MP: {e}")
 
@@ -177,7 +204,7 @@ def health_check():
     return "Bot VIP de Empleos Activo 24/7", 200
 
 # ------------------------------------------------------------------------------
-# CURADOR IA Y ESCÁNER DE EMPLEOS
+# ESCÁNER DE EMPLEOS E IA
 # ------------------------------------------------------------------------------
 def generate_job_post_ai(title, description, raw_link):
     if not client:
@@ -249,7 +276,6 @@ def run_job_scraper():
 def run_telegram_listener():
     print("🎧 Hilo iniciado: Bot Listener de Telegram")
     
-    # Eliminar cualquier webhook previo para permitir Long-Polling
     try:
         requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
     except Exception:
@@ -265,7 +291,6 @@ def run_telegram_listener():
             if not response.get("ok"):
                 error_code = response.get("error_code")
                 if error_code == 409:
-                    print("⚠️ Conflicto 409: Otra instancia intentando conectarse. Reintentando en 10s...")
                     time.sleep(10)
                     continue
                 time.sleep(5)
@@ -280,19 +305,26 @@ def run_telegram_listener():
 
                     if text in ["/start", "/suscribirse", "suscribirme"]:
                         pay_link = create_mp_preference(chat_id)
-                        msg = (
-                            f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
-                            f"Accede a publicaciones diarias con vacantes 100% remotas pagadas en USD.\n\n"
-                            f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes."
-                        )
-                        reply_markup = None
                         if pay_link:
+                            msg = (
+                                f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
+                                f"Accede a publicaciones diarias con vacantes 100% remotas pagadas en USD.\n\n"
+                                f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes."
+                            )
                             reply_markup = {
                                 "inline_keyboard": [
                                     [{"text": f"💳 PAGAR SUSCRIPCION (${SUBSCRIPTION_PRICE:,.0f} ARS)", "url": pay_link}]
                                 ]
                             }
-                        send_telegram_message(chat_id, msg, reply_markup=reply_markup)
+                            send_telegram_message(chat_id, msg, reply_markup=reply_markup)
+                        else:
+                            msg = (
+                                f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
+                                f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
+                                f"⚠️ *Atencion:* Ocurrio un inconveniente al generar la pasarela de pago. "
+                                f"Revisa los logs en Render para verificar credenciales."
+                            )
+                            send_telegram_message(chat_id, msg)
 
                     elif text in ["/estado", "/mi_estado"]:
                         subscribers = load_json_file(SUBSCRIBERS_FILE, {})
