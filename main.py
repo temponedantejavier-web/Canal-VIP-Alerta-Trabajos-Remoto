@@ -11,13 +11,21 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_VIP_CHANNEL_ID = os.getenv("TELEGRAM_VIP_CHANNEL_ID", "")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_VIP_CHANNEL_ID = os.getenv("TELEGRAM_VIP_CHANNEL_ID", "").strip()
+BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "").strip()
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 SUBSCRIPTION_PRICE = float(os.getenv("SUBSCRIPTION_PRICE", "5000.0"))
+
+# --- DIAGNÓSTICO EN CONSOLA ---
+print("🔍 --- VERIFICACIÓN DE VARIABLES DE ENTORNO ---")
+print(f"• TELEGRAM_BOT_TOKEN detectado: {bool(TELEGRAM_BOT_TOKEN)}")
+print(f"• Longitud del Token: {len(TELEGRAM_BOT_TOKEN)} caracteres")
+if TELEGRAM_BOT_TOKEN:
+    print(f"• Inicio del Token: {TELEGRAM_BOT_TOKEN[:6]}...")
+print("--------------------------------------------------")
 
 POSTED_JOBS_FILE = "posted_jobs.json"
 SUBSCRIBERS_FILE = "subscribers.json"
