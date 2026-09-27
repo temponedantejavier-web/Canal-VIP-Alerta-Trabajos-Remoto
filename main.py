@@ -46,7 +46,6 @@ MP_FIXED_LINK = (
     os.getenv("MP_LINK") or ""
 ).strip()
 
-# Agregá tu Telegram Chat ID personal en Render si querés restringir /activar solo a vos
 ADMIN_CHAT_ID = (os.getenv("ADMIN_CHAT_ID") or "").strip()
 
 raw_price = (
@@ -82,17 +81,17 @@ def save_json_file(filename, data):
         print(f"❌ Error al guardar {filename}: {e}", flush=True)
 
 # ------------------------------------------------------------------------------
-# TELEGRAM HELPERS
+# TELEGRAM HELPERS (SOPORTE HTML)
 # ------------------------------------------------------------------------------
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN or not chat_id:
         return None
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",  # Usamos HTML para evitar errores de Markdown y código plano
         "disable_web_page_preview": True
     }
     if reply_markup:
@@ -105,7 +104,7 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         return None
 
 def create_one_time_invite_link(channel_id):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/createChatInviteLink"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/createChatInviteLink"
     payload = {
         "chat_id": channel_id,
         "member_limit": 1,
@@ -120,8 +119,8 @@ def create_one_time_invite_link(channel_id):
     return None
 
 def kick_user_from_channel(channel_id, user_id):
-    ban_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/banChatMember"
-    unban_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/unbanChatMember"
+    ban_url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/banChatMember"
+    unban_url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/unbanChatMember"
     try:
         requests.post(ban_url, json={"chat_id": channel_id, "user_id": user_id}, timeout=10)
         requests.post(unban_url, json={"chat_id": channel_id, "user_id": user_id, "only_if_banned": True}, timeout=10)
@@ -142,13 +141,13 @@ def activate_subscriber(user_id):
     
     if invite_link:
         msg = (
-            f"🎉 *¡PAGO CONFIRMADO Y SUSCRIPCIÓN ACTIVADA!*\n\n"
-            f"Tu acceso VIP está activo hasta el: `{expiration_date}`\n\n"
-            f"🔗 *Tu enlace exclusivo de ingreso al Canal VIP:*\n{invite_link}\n\n"
-            f"⚠️ _Nota: Este enlace es personal y de un solo uso._"
+            f"🎉 <b>¡PAGO CONFIRMADO Y SUSCRIPCIÓN ACTIVADA!</b>\n\n"
+            f"Tu acceso VIP está activo hasta el: <code>{expiration_date}</code>\n\n"
+            f"🔗 <b>Tu enlace exclusivo de ingreso al Canal VIP:</b>\n{invite_link}\n\n"
+            f"⚠️ <i>Nota: Este enlace es personal y de un solo uso.</i>"
         )
     else:
-        msg = "🎉 *¡Suscripción activada!* Por favor contactá al administrador para recibir tu enlace."
+        msg = "🎉 <b>¡Suscripción activada!</b> Por favor contactá al administrador para recibir tu enlace."
 
     send_telegram_message(user_id, msg)
     return expiration_date
@@ -158,41 +157,59 @@ def health_check():
     return "Bot VIP de Empleos Activo 24/7", 200
 
 # ------------------------------------------------------------------------------
-# ESCÁNER DE EMPLEOS E IA
+# ESCÁNER DE EMPLEOS CON TRADUCCIÓN E IA
 # ------------------------------------------------------------------------------
 def generate_job_post_ai(title, description, raw_link):
     if not client:
         return (
-            f"💼 *{title}*\n\n"
-            f"🌍 *Modalidad:* 100% Remoto / USD\n"
-            f"📝 *Descripcion:* {description[:250]}...\n\n"
-            f"🔗 [Postularse Directamente]({raw_link})"
+            f"💼 <b>{title}</b>\n\n"
+            f"🌍 <b>Modalidad:</b> 100% Remoto (USD)\n"
+            f"📝 <b>Descripción:</b> {description[:250]}...\n\n"
+            f"🔗 <a href='{raw_link}'>👉 POSTULARME AL PUESTO DE TRABAJO</a>"
         )
 
     prompt = f"""
-    Eres el redactor del Canal VIP de Empleos Remotos USD.
-    Crea una publicacion clara y profesional en Markdown para Telegram.
+    Eres el redactor experto del Canal VIP de Empleos Remotos USD.
+    Tu tarea es traducir y resumir al ESPAÑOL la siguiente oferta de trabajo que originalmente está en inglés.
 
-    Titulo: {title}
-    Descripcion: {description}
+    Título original: {title}
+    Descripción original: {description}
     Link: {raw_link}
 
-    Estructura requerida:
-    💼 *Puesto:* [Nombre del puesto]
-    🌍 *Modalidad:* 100% Remoto (USD)
-    💡 *Resumen:* [1 o 2 oraciones clave]
+    REGLAS OBLIGATORIAS DE FORMATO:
+    1. Usa ÚNICAMENTE etiquetas HTML válidas para Telegram (<b>, <i>, <a href="...">).
+    2. NUNCA envíes bloques de código (está estrictamente prohibido usar ``` o ```html o ```markdown).
+    3. Todo el resumen debe estar redactado en ESPAÑOL fluido y profesional.
+    4. Incluye un enlace HTML directo y clickeable a la oferta.
 
-    🔗 [POSTULARME AL PUESTO DE TRABAJO]({raw_link})
+    Estructura requerida:
+    💼 <b>Puesto:</b> [Título traducido o nombre técnico común]
+    🏢 <b>Empresa/Origen:</b> We Work Remotely
+    🌍 <b>Modalidad:</b> 100% Remoto (USD)
+    💡 <b>Resumen de la Vacante:</b> [2 o 3 oraciones claras en español sobre qué buscan y responsabilidades clave]
+
+    🔗 <a href="{raw_link}">👉 POSTULARME AQUÍ AL PUESTO DE TRABAJO</a>
     """
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}]
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content.strip()
+        
+        # Sanitizar para remover cualquier bloque de código sobrante si la IA lo incluyó
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+            
+        return content
     except Exception as e:
         print(f"⚠️ Error OpenAI: {e}", flush=True)
-        return f"💼 *{title}*\n\n🔗 [Postularse aqui]({raw_link})"
+        return f"💼 <b>{title}</b>\n\n🔗 <a href='{raw_link}'>👉 Postularse aquí</a>"
 
 def run_job_scraper():
     print("🚀 Hilo iniciado: Escaner de Empleos", flush=True)
@@ -201,7 +218,7 @@ def run_job_scraper():
         new_jobs = []
 
         try:
-            feed = feedparser.parse("https://weworkremotely.com/remote-jobs.rss")
+            feed = feedparser.parse("[https://weworkremotely.com/remote-jobs.rss](https://weworkremotely.com/remote-jobs.rss)")
             for entry in feed.entries[:10]:
                 job_id = entry.id if 'id' in entry else entry.link
                 if job_id not in posted_jobs:
@@ -231,14 +248,14 @@ def run_telegram_listener():
     print("🎧 Hilo iniciado: Bot Listener de Telegram", flush=True)
     
     try:
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
+        requests.get(f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
     except Exception:
         pass
 
     offset = None
     while True:
         try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/getUpdates"
             params = {"timeout": 20, "offset": offset}
             response = requests.get(url, params=params, timeout=25).json()
 
@@ -253,13 +270,12 @@ def run_telegram_listener():
                     chat_id = message["chat"]["id"]
                     text = message["text"].strip()
 
-                    # COMANDO /START O /SUSCRIBIRSE
                     if text.lower() in ["/start", "/suscribirse", "suscribirme"]:
                         msg = (
-                            f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
-                            f"Accedé a publicaciones diarias con vacantes 100% remotas pagadas en USD.\n\n"
-                            f"💰 *Precio Suscripción:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
-                            f"📌 *Tu ID de Usuario:* `{chat_id}`"
+                            f"🚀 <b>BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP</b>\n\n"
+                            f"Accedé a publicaciones diarias con vacantes 100% remotas pagadas en USD traducidas al español.\n\n"
+                            f"💰 <b>Precio Suscripción:</b> ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
+                            f"📌 <b>Tu ID de Usuario:</b> <code>{chat_id}</code>"
                         )
                         reply_markup = {
                             "inline_keyboard": [
@@ -268,22 +284,20 @@ def run_telegram_listener():
                         }
                         send_telegram_message(chat_id, msg, reply_markup=reply_markup)
 
-                    # COMANDO ADMINISTRADOR /ACTIVAR ID
                     elif text.startswith("/activar"):
                         parts = text.split()
                         if len(parts) > 1:
                             target_id = parts[1]
                             exp = activate_subscriber(target_id)
-                            send_telegram_message(chat_id, f"✅ Usuario `{target_id}` activado con éxito hasta `{exp}`.")
+                            send_telegram_message(chat_id, f"✅ Usuario <code>{target_id}</code> activado con éxito hasta <code>{exp}</code>.")
                         else:
-                            send_telegram_message(chat_id, "⚠️ Uso correcto: `/activar ID_DEL_USUARIO`")
+                            send_telegram_message(chat_id, "⚠️ Uso correcto: <code>/activar ID_DEL_USUARIO</code>")
 
-                    # COMANDO /ESTADO
                     elif text.lower() in ["/estado", "/mi_estado"]:
                         subscribers = load_json_file(SUBSCRIBERS_FILE, {})
                         sub = subscribers.get(str(chat_id))
                         if sub and sub.get("status") == "active":
-                            send_telegram_message(chat_id, f"✅ Tu suscripción está *ACTIVA* hasta: `{sub.get('expiration_date')}`")
+                            send_telegram_message(chat_id, f"✅ Tu suscripción está <b>ACTIVA</b> hasta: <code>{sub.get('expiration_date')}</code>")
                         else:
                             send_telegram_message(chat_id, "❌ No tenés una suscripción activa. Usá /suscribirse para abonar tu acceso.")
         except Exception as e:
@@ -301,16 +315,13 @@ def run_expiration_checker():
                 exp_date = datetime.strptime(data["expiration_date"], "%Y-%m-%d %H:%M:%S")
                 if now > exp_date:
                     kick_user_from_channel(TELEGRAM_VIP_CHANNEL_ID, user_id)
-                    send_telegram_message(user_id, "🔴 *TU SUSCRIPCIÓN VIP HA VENCIDO*\n\nUsá /suscribirse para renovar tu acceso.")
+                    send_telegram_message(user_id, "🔴 <b>TU SUSCRIPCIÓN VIP HA VENCIDO</b>\n\nUsá /suscribirse para renovar tu acceso.")
                     data["status"] = "expired"
                     updated = True
         if updated:
             save_json_file(SUBSCRIBERS_FILE, subscribers)
         time.sleep(43200)
 
-# ------------------------------------------------------------------------------
-# INICIALIZACIÓN
-# ------------------------------------------------------------------------------
 def start_background_threads():
     threading.Thread(target=run_telegram_listener, daemon=True).start()
     threading.Thread(target=run_job_scraper, daemon=True).start()
