@@ -114,10 +114,16 @@ def create_mp_preference(user_id):
         "external_reference": str(user_id)
     }
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=15).json()
-        return res.get("init_point")
+        res = requests.post(url, json=payload, headers=headers, timeout=15)
+        res_data = res.json()
+        
+        if "init_point" in res_data:
+            return res_data["init_point"]
+        else:
+            print(f"❌ Respuesta rechazada por MercadoPago: {res_data}")
+            return None
     except Exception as e:
-        print(f"❌ Error al crear preferencia de MP: {e}")
+        print(f"❌ Error de conexion con MercadoPago: {e}")
         return None
 
 @app.route("/webhook/mercadopago", methods=["POST"])
