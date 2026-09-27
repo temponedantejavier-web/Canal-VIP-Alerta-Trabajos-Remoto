@@ -12,17 +12,44 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # ------------------------------------------------------------------------------
-# CONFIGURACIÓN Y SANITIZACIÓN DE VARIABLES DE ENTORNO
+# CONFIGURACIÓN Y LECTURA FLEXIBLE DE VARIABLES (TOLERANTE A MAYÚSCULAS/ERRATAS)
 # ------------------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_VIP_CHANNEL_ID = os.getenv("TELEGRAM_VIP_CHANNEL_ID", "").strip()
-BOT_USERNAME = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN", "").strip()
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+TELEGRAM_BOT_TOKEN = (
+    os.getenv("TELEGRAM_BOT_TOKEN") or ""
+).strip()
 
+TELEGRAM_VIP_CHANNEL_ID = (
+    os.getenv("TELEGRAM_VIP_CHANNEL_ID") or 
+    os.getenv("Telegram_vip_channel") or ""
+).strip()
+
+BOT_USERNAME = (
+    os.getenv("BOT_USERNAME") or 
+    os.getenv("Bot_username") or ""
+).strip().lstrip("@")
+
+OPENAI_API_KEY = (
+    os.getenv("OPENAI_API_KEY") or 
+    os.getenv("OpenAI_API_Key") or ""
+).strip()
+
+MP_ACCESS_TOKEN = (
+    os.getenv("MP_ACCESS_TOKEN") or 
+    os.getenv("Mp_acces_token") or 
+    os.getenv("Mp_access_token") or ""
+).strip()
+
+WEBHOOK_URL = (
+    os.getenv("WEBHOOK_URL") or 
+    os.getenv("Webhook_URL") or ""
+).strip().rstrip("/")
+
+raw_price = (
+    os.getenv("SUBSCRIPTION_PRICE") or 
+    os.getenv("Suscription_price") or "5000"
+)
 try:
-    SUBSCRIPTION_PRICE = float(os.getenv("SUBSCRIPTION_PRICE", "5000").replace(",", "").strip())
+    SUBSCRIPTION_PRICE = float(str(raw_price).replace(",", "").strip())
 except Exception:
     SUBSCRIPTION_PRICE = 5000.0
 
@@ -55,6 +82,10 @@ def save_json_file(filename, data):
 def send_telegram_message(chat_id, text, reply_markup=None):
     if not TELEGRAM_BOT_TOKEN:
         print("❌ Error Telegram: TELEGRAM_BOT_TOKEN no esta configurado.")
+        return None
+
+    if not chat_id:
+        print("❌ Error Telegram: chat_id esta vacio.")
         return None
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -108,7 +139,7 @@ def kick_user_from_channel(channel_id, user_id):
 # ------------------------------------------------------------------------------
 def create_mp_preference(user_id):
     if not MP_ACCESS_TOKEN:
-        print("❌ ERROR MERCADO PAGO: La variable MP_ACCESS_TOKEN esta vacia en Render.")
+        print("❌ ERROR MERCADO PAGO: La variable MP_ACCESS_TOKEN esta vacia.")
         return None
 
     url = "https://api.mercadopago.com/checkout/preferences"
@@ -193,7 +224,7 @@ def mercadopago_webhook():
                     msg = "🎉 *¡Pago confirmado!* Contacta al soporte para recibir tu enlace."
 
                 send_telegram_message(user_id, msg)
-                print(f"✅ Suscripcion activada exitosamente para el usuario {user_id}")
+                print(f"✅ Suscripcion activada exitosamente para usuario {user_id}")
     except Exception as e:
         print(f"❌ Error procesando Webhook MP: {e}")
 
