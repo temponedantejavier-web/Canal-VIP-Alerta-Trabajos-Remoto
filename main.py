@@ -50,7 +50,7 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         res = requests.post(url, json=payload, timeout=10)
         return res.json()
     except Exception as e:
-        print(f"Error Telegram: {e}")
+        print(f"❌ Error enviando mensaje Telegram: {e}")
         return None
 
 def create_one_time_invite_link(channel_id):
@@ -65,7 +65,7 @@ def create_one_time_invite_link(channel_id):
         if res.get("ok"):
             return res["result"]["invite_link"]
     except Exception as e:
-        print(f"Error Link: {e}")
+        print(f"❌ Error creando link de invitacion: {e}")
     return None
 
 def kick_user_from_channel(channel_id, user_id):
@@ -75,7 +75,7 @@ def kick_user_from_channel(channel_id, user_id):
         requests.post(ban_url, json={"chat_id": channel_id, "user_id": user_id}, timeout=10)
         requests.post(unban_url, json={"chat_id": channel_id, "user_id": user_id, "only_if_banned": True}, timeout=10)
     except Exception as e:
-        print(f"Error Kick: {e}")
+        print(f"❌ Error al expulsar usuario: {e}")
 
 def create_mp_preference(user_id):
     url = "https://api.mercadopago.com/checkout/preferences"
@@ -101,7 +101,7 @@ def create_mp_preference(user_id):
         res = requests.post(url, json=payload, headers=headers, timeout=15).json()
         return res.get("init_point")
     except Exception as e:
-        print(f"Error MP: {e}")
+        print(f"❌ Error MercadoPago: {e}")
         return None
 
 @app.route("/webhook/mercadopago", methods=["POST"])
@@ -135,13 +135,13 @@ def mercadopago_webhook():
                 msg = f"🎉 *PAGO CONFIRMADO*\n\nAcceso VIP activo hasta: `{expiration_date}`\n\n🔗 Link: {invite_link}" if invite_link else "🎉 Pago confirmado. Contacta soporte."
                 send_telegram_message(user_id, msg)
     except Exception as e:
-        print(f"Error Webhook: {e}")
+        print(f"❌ Error en Webhook MP: {e}")
 
     return jsonify({"status": "ok"}), 200
 
 @app.route("/")
 def health_check():
-    return "Bot VIP Activo", 200
+    return "Bot VIP Activo 24/7", 200
 
 def generate_job_post_ai(title, description, raw_link):
     if not client:
@@ -158,6 +158,7 @@ def generate_job_post_ai(title, description, raw_link):
         return f"💼 *{title}*\n\n🔗 [Ver vacante]({raw_link})"
 
 def run_job_scraper():
+    print("🚀 Iniciando Hilo: Escaner de Empleos")
     while True:
         posted_jobs = set(load_json_file(POSTED_JOBS_FILE, []))
         new_jobs = []
@@ -169,8 +170,8 @@ def run_job_scraper():
                 if job_id not in posted_jobs:
                     desc = BeautifulSoup(entry.summary, "html.parser").get_text() if hasattr(entry, 'summary') else ""
                     new_jobs.append((job_id, entry.title, desc, entry.link))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"❌ Error Scraper WWR: {e}")
 
         published_count = 0
         for job_id, title, description, link in new_jobs:
@@ -187,12 +188,25 @@ def run_job_scraper():
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 def run_telegram_listener():
+    print("🎧 Iniciando Hilo: Bot Listener de Telegram")
+    # Limpiar cualquier Webhook residual para evitar conflictos
+    try:
+        requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook", timeout=5)
+    except Exception:
+        pass
+
     offset = None
     while True:
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
             params = {"timeout": 20, "offset": offset}
             response = requests.get(url, params=params, timeout=25).json()
+            
+            if not response.get("ok"):
+                print(f"⚠️ Alerta Telegram getUpdates: {response}")
+                time.sleep(5)
+                continue
+
             for update in response.get("result", []):
                 offset = update["update_id"] + 1
                 message = update.get("message")
@@ -213,11 +227,12 @@ def run_telegram_listener():
                             send_telegram_message(chat_id, f"✅ Activo hasta: `{sub.get('expiration_date')}`")
                         else:
                             send_telegram_message(chat_id, "❌ Sin suscripcion activa.")
-        except Exception:
-            pass
-        time.sleep(1)
+        except Exception as e:
+            print(f"❌ Error Listener Telegram: {e}")
+            time.sleep(2)
 
 def run_expiration_checker():
+    print("🕒 Iniciando Hilo: Verificador de Vencimientos")
     while True:
         subscribers = load_json_file(SUBSCRIBERS_FILE, {})
         now = datetime.now()
@@ -234,9 +249,14 @@ def run_expiration_checker():
             save_json_file(SUBSCRIBERS_FILE, subscribers)
         time.sleep(43200)
 
-if __name__ == "__main__":
+# INICIALIZACIÓN DE HILOS PARA GUNICORN
+def start_background_threads():
     threading.Thread(target=run_telegram_listener, daemon=True).start()
     threading.Thread(target=run_job_scraper, daemon=True).start()
     threading.Thread(target=run_expiration_checker, daemon=True).start()
+
+start_background_threads()
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
