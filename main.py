@@ -10,13 +10,12 @@ from bs4 import BeautifulSoup
 from openai import OpenAI
 from flask import Flask, request, jsonify
 
-# Desactivar buffering de logs para ver impresiones en tiempo real en Render
 sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
 
 # ------------------------------------------------------------------------------
-# CONFIGURACIÓN Y LECTURA FLEXIBLE DE VARIABLES
+# CONFIGURACIÓN DE VARIABLES
 # ------------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
 
@@ -41,17 +40,14 @@ MP_ACCESS_TOKEN = (
     os.getenv("Mp_access_token") or ""
 ).strip()
 
-# LINK DIRECTO DE MERCADO PAGO (OPCIÓN INFALIBLE)
 MP_FIXED_LINK = (
     os.getenv("MP_FIXED_LINK") or 
     os.getenv("Mp_fixed_link") or 
     os.getenv("MP_LINK") or ""
 ).strip()
 
-WEBHOOK_URL = (
-    os.getenv("WEBHOOK_URL") or 
-    os.getenv("Webhook_URL") or ""
-).strip().rstrip("/")
+# Agregá tu Telegram Chat ID personal en Render si querés restringir /activar solo a vos
+ADMIN_CHAT_ID = (os.getenv("ADMIN_CHAT_ID") or "").strip()
 
 raw_price = (
     os.getenv("SUBSCRIPTION_PRICE") or 
@@ -89,12 +85,7 @@ def save_json_file(filename, data):
 # TELEGRAM HELPERS
 # ------------------------------------------------------------------------------
 def send_telegram_message(chat_id, text, reply_markup=None):
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ Error Telegram: TELEGRAM_BOT_TOKEN no esta configurado.", flush=True)
-        return None
-
-    if not chat_id:
-        print("❌ Error Telegram: chat_id esta vacio.", flush=True)
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
         return None
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -108,10 +99,7 @@ def send_telegram_message(chat_id, text, reply_markup=None):
         payload["reply_markup"] = reply_markup
     try:
         res = requests.post(url, json=payload, timeout=10)
-        res_json = res.json()
-        if not res_json.get("ok"):
-            print(f"❌ Error enviando mensaje a Telegram: {res_json}", flush=True)
-        return res_json
+        return res.json()
     except Exception as e:
         print(f"❌ Excepcion enviando mensaje Telegram: {e}", flush=True)
         return None
@@ -127,8 +115,6 @@ def create_one_time_invite_link(channel_id):
         res = requests.post(url, json=payload, timeout=10).json()
         if res.get("ok"):
             return res["result"]["invite_link"]
-        else:
-            print(f"❌ Error creando link de invitacion en Telegram: {res}", flush=True)
     except Exception as e:
         print(f"❌ Excepcion creando link de invitacion: {e}", flush=True)
     return None
@@ -143,108 +129,29 @@ def kick_user_from_channel(channel_id, user_id):
     except Exception as e:
         print(f"❌ Error al remover usuario {user_id}: {e}", flush=True)
 
-# ------------------------------------------------------------------------------
-# MERCADO PAGO Y WEBHOOKS
-# ------------------------------------------------------------------------------
-def create_mp_preference(user_id):
-    # Si configuraste un link directo de Mercado Pago (ej. https://mpago.la/...), usalo prioritariamente
-    if MP_FIXED_LINK:
-        print(f"🔗 Usando MP_FIXED_LINK directo: {MP_FIXED_LINK}", flush=True)
-        return MP_FIXED_LINK
-
-    if not MP_ACCESS_TOKEN:
-        print("❌ ERROR MERCADO PAGO: MP_ACCESS_TOKEN y MP_FIXED_LINK estan vacios.", flush=True)
-        return None
-
-    url = "https://api.mercadopago.com/checkout/preferences"
-    headers = {
-        "Authorization": f"Bearer {MP_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+def activate_subscriber(user_id):
+    subscribers = load_json_file(SUBSCRIBERS_FILE, {})
+    expiration_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    subscribers[str(user_id)] = {
+        "user_id": str(user_id),
+        "expiration_date": expiration_date,
+        "status": "active"
     }
+    save_json_file(SUBSCRIBERS_FILE, subscribers)
+    invite_link = create_one_time_invite_link(TELEGRAM_VIP_CHANNEL_ID)
     
-    back_url = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "https://mercadopago.com"
-    
-    payload = {
-        "items": [
-            {
-                "title": "Suscripcion VIP 30 dias - Alertas Empleos USD",
-                "quantity": 1,
-                "unit_price": SUBSCRIPTION_PRICE,
-                "currency_id": "ARS"
-            }
-        ],
-        "back_urls": {
-            "success": back_url,
-            "pending": back_url,
-            "failure": back_url
-        },
-        "auto_return": "approved",
-        "external_reference": str(user_id)
-    }
+    if invite_link:
+        msg = (
+            f"🎉 *¡PAGO CONFIRMADO Y SUSCRIPCIÓN ACTIVADA!*\n\n"
+            f"Tu acceso VIP está activo hasta el: `{expiration_date}`\n\n"
+            f"🔗 *Tu enlace exclusivo de ingreso al Canal VIP:*\n{invite_link}\n\n"
+            f"⚠️ _Nota: Este enlace es personal y de un solo uso._"
+        )
+    else:
+        msg = "🎉 *¡Suscripción activada!* Por favor contactá al administrador para recibir tu enlace."
 
-    if WEBHOOK_URL and WEBHOOK_URL.startswith("http"):
-        payload["notification_url"] = f"{WEBHOOK_URL}/webhook/mercadopago"
-
-    try:
-        res = requests.post(url, json=payload, headers=headers, timeout=15)
-        res_data = res.json()
-        
-        if res.status_code in [200, 201]:
-            init_point = res_data.get("init_point") or res_data.get("sandbox_init_point")
-            if init_point:
-                return init_point
-        
-        print(f"❌ ERROR MERCADO PAGO API [HTTP {res.status_code}]: {res_data}", flush=True)
-        return None
-    except Exception as e:
-        print(f"❌ Excepcion conectando a MercadoPago: {e}", flush=True)
-        return None
-
-@app.route("/webhook/mercadopago", methods=["POST"])
-def mercadopago_webhook():
-    data = request.get_json() or {}
-    payment_id = data.get("data", {}).get("id") or request.args.get("data.id") or request.args.get("id")
-
-    if not payment_id:
-        return jsonify({"status": "ignored"}), 200
-
-    payment_url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
-    headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-    try:
-        payment_info = requests.get(payment_url, headers=headers, timeout=15).json()
-        if payment_info.get("status") == "approved":
-            user_id = payment_info.get("external_reference")
-            if user_id:
-                subscribers = load_json_file(SUBSCRIBERS_FILE, {})
-                if str(user_id) in subscribers and subscribers[str(user_id)].get("last_payment_id") == str(payment_id):
-                    return jsonify({"status": "already_processed"}), 200
-
-                expiration_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-                subscribers[str(user_id)] = {
-                    "user_id": user_id,
-                    "expiration_date": expiration_date,
-                    "last_payment_id": str(payment_id),
-                    "status": "active"
-                }
-                save_json_file(SUBSCRIBERS_FILE, subscribers)
-                invite_link = create_one_time_invite_link(TELEGRAM_VIP_CHANNEL_ID)
-                
-                if invite_link:
-                    msg = (
-                        f"🎉 *¡PAGO CONFIRMADO EXITOSAMENTE!*\n\n"
-                        f"Tu suscripcion VIP esta activa hasta el: `{expiration_date}`\n\n"
-                        f"🔗 *Tu enlace exclusivo al Canal VIP:*\n{invite_link}\n\n"
-                        f"⚠️ _Este enlace es de uso unico y personal._"
-                    )
-                else:
-                    msg = "🎉 *¡Pago confirmado!* Contacta al soporte para recibir tu enlace."
-
-                send_telegram_message(user_id, msg)
-                print(f"✅ Suscripcion activada exitosamente para usuario {user_id}", flush=True)
-    except Exception as e:
-        print(f"❌ Error procesando Webhook MP: {e}", flush=True)
-
-    return jsonify({"status": "ok"}), 200
+    send_telegram_message(user_id, msg)
+    return expiration_date
 
 @app.route("/")
 def health_check():
@@ -336,10 +243,6 @@ def run_telegram_listener():
             response = requests.get(url, params=params, timeout=25).json()
 
             if not response.get("ok"):
-                error_code = response.get("error_code")
-                if error_code == 409:
-                    time.sleep(10)
-                    continue
                 time.sleep(5)
                 continue
 
@@ -348,38 +251,41 @@ def run_telegram_listener():
                 message = update.get("message")
                 if message and "text" in message:
                     chat_id = message["chat"]["id"]
-                    text = message["text"].strip().lower()
+                    text = message["text"].strip()
 
-                    if text in ["/start", "/suscribirse", "suscribirme"]:
-                        pay_link = create_mp_preference(chat_id)
-                        if pay_link:
-                            msg = (
-                                f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
-                                f"Accede a publicaciones diarias con vacantes 100% remotas pagadas en USD.\n\n"
-                                f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes."
-                            )
-                            reply_markup = {
-                                "inline_keyboard": [
-                                    [{"text": f"💳 PAGAR SUSCRIPCION (${SUBSCRIPTION_PRICE:,.0f} ARS)", "url": pay_link}]
-                                ]
-                            }
-                            send_telegram_message(chat_id, msg, reply_markup=reply_markup)
+                    # COMANDO /START O /SUSCRIBIRSE
+                    if text.lower() in ["/start", "/suscribirse", "suscribirme"]:
+                        msg = (
+                            f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
+                            f"Accedé a publicaciones diarias con vacantes 100% remotas pagadas en USD.\n\n"
+                            f"💰 *Precio Suscripción:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
+                            f"📌 *Tu ID de Usuario:* `{chat_id}`"
+                        )
+                        reply_markup = {
+                            "inline_keyboard": [
+                                [{"text": f"💳 PAGAR SUSCRIPCIÓN (${SUBSCRIPTION_PRICE:,.0f} ARS)", "url": MP_FIXED_LINK}]
+                            ]
+                        }
+                        send_telegram_message(chat_id, msg, reply_markup=reply_markup)
+
+                    # COMANDO ADMINISTRADOR /ACTIVAR ID
+                    elif text.startswith("/activar"):
+                        parts = text.split()
+                        if len(parts) > 1:
+                            target_id = parts[1]
+                            exp = activate_subscriber(target_id)
+                            send_telegram_message(chat_id, f"✅ Usuario `{target_id}` activado con éxito hasta `{exp}`.")
                         else:
-                            msg = (
-                                f"🚀 *BIENVENIDO AL BOT DE EMPLEOS REMOTOS VIP*\n\n"
-                                f"💰 *Precio Suscripcion:* ${SUBSCRIPTION_PRICE:,.0f} ARS / mes.\n\n"
-                                f"⚠️ *Atencion:* Ocurrio un inconveniente al generar la pasarela de pago. "
-                                f"Revisa los logs en Render."
-                            )
-                            send_telegram_message(chat_id, msg)
+                            send_telegram_message(chat_id, "⚠️ Uso correcto: `/activar ID_DEL_USUARIO`")
 
-                    elif text in ["/estado", "/mi_estado"]:
+                    # COMANDO /ESTADO
+                    elif text.lower() in ["/estado", "/mi_estado"]:
                         subscribers = load_json_file(SUBSCRIBERS_FILE, {})
                         sub = subscribers.get(str(chat_id))
                         if sub and sub.get("status") == "active":
-                            send_telegram_message(chat_id, f"✅ Tu suscripcion esta *ACTIVA* hasta: `{sub.get('expiration_date')}`")
+                            send_telegram_message(chat_id, f"✅ Tu suscripción está *ACTIVA* hasta: `{sub.get('expiration_date')}`")
                         else:
-                            send_telegram_message(chat_id, "❌ No tienes una suscripcion activa. Usa /suscribirse para ingresar.")
+                            send_telegram_message(chat_id, "❌ No tenés una suscripción activa. Usá /suscribirse para abonar tu acceso.")
         except Exception as e:
             print(f"❌ Error en Listener Telegram: {e}", flush=True)
             time.sleep(5)
@@ -395,7 +301,7 @@ def run_expiration_checker():
                 exp_date = datetime.strptime(data["expiration_date"], "%Y-%m-%d %H:%M:%S")
                 if now > exp_date:
                     kick_user_from_channel(TELEGRAM_VIP_CHANNEL_ID, user_id)
-                    send_telegram_message(user_id, "🔴 *TU SUSCRIPCION VIP HA VENCIDO*\n\nUsa /suscribirse para renovar tu acceso.")
+                    send_telegram_message(user_id, "🔴 *TU SUSCRIPCIÓN VIP HA VENCIDO*\n\nUsá /suscribirse para renovar tu acceso.")
                     data["status"] = "expired"
                     updated = True
         if updated:
